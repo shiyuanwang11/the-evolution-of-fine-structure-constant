@@ -6,4 +6,4 @@
 
 * The reason why we can use FRB DM to constrain $\gamma$ is the fine-structure constant $\alpha$ is related to $n_e$, and FRB DM can detect it. (More details are in the above paper and my notes)
 
-* The floder called '/galaxy' use the same power spectrm as previous work, which is 'Cosmic gwowth rate'. It can forecast the $/frac{\Delta \alpha}{\alpha}(z)$ in three different redshift 0.15, 0.45, 0.75, which are corresponding with three galaxy redshift bins. And in the *.pdf files in this floder, the label is $alpha$, which is actually $/frac{\Delta \alpha}{\alpha}(z)$, here is just a brief note.
+* The floder called '/galaxy' use the same power spectrm as previous work, which is 'Cosmic gwowth rate'. It can forecast the $\frac{\Delta \alpha}{\alpha}(z)$ in three different redshift 0.15, 0.45, 0.75, which are corresponding with three galaxy redshift bins. And in the *.pdf files in this floder, the label is $alpha$, which is actually $\frac{\Delta \alpha}{\alpha}(z)$, here is just a brief note.
