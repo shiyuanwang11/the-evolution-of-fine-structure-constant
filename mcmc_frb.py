@@ -1,122 +1,148 @@
+from cobaya.run import run
 import numpy as np
-import matplotlib.pyplot as plt
 from colossus.cosmology import cosmology
 cosmo=cosmology.setCosmology('planck18')
-from astropy.cosmology import Planck18
-c=Planck18
-from colossus import utils
-from cobaya.run import run
-from scipy import stats
-from scipy.integrate import quad
+h = cosmo.H0/100
 
+from scipy.integrate import quad, dblquad
+from functools import partial
 
-######################## get power spectrum and noise
-Y = 0.24
-rhob0 = 4.2e-25 #g/m^3
-mp = utils.constants.M_PROTON #1.672621898e-24(g)
-c_speed = 1e-2*utils.constants.C #m/s
-#dm_host0 = 100 # pc cm^-3
-z0 = 1.5
-bias_FRB = 1
-sigma_dm = 30
-fsky = 0.8
+import hmvec as hm
+import Func
+
+## different from galaxies
+zg=0.15
+ngal = 3.4e-2*h**3    # /Mpc^3, 3.4e-2 1.1e-2 5.5e-3
+fsky=17500./41253.
+dz = 0.15
+sigmaD = 300
+Nfrb = 1e+7
+zfrb = zg+dz+0.1
+
+## fixed
+zs = np.linspace(0.,1.,101)
+ms = np.geomspace(2e10,1e17,200)
+c = 3e+5  #km/s
+c_speed = c
+ne0 = Func.ne0_()    #1/m^3 0.17174573422830966
+chig = cosmo.comovingDistance(0.,zg)/h # Mpc
+dchig = cosmo.comovingDistance(z_min=zg-dz,z_max=zg+dz)/h   # Mpc
+V = Func.Vs(fsky,zg-dz,zg+dz)
 
 l_max = 500
 ell_values = np.arange(l_max)[2:]
+kk = ell_values/chig
 
-def N(z):
-    return z**2*np.exp(-z*2)
+index = np.where(zs==zg)[0].astype(int)
 
-z1 = np.linspace(0,z0,100)
-nbar = np.trapz(N(z1),z1)
-
-
-#W_IGM, a constant figm
-def Wigm(z,figm):
-    z_int = np.linspace(z,20.,100)
-    w_int = N(z)
-    wint = np.trapz(w_int,z_int)
-    Wigm = wint*(1-0.5*Y)*figm*rhob0/mp*(1+z)/cosmo.Hz(z)
-    return Wigm/nbar
-
-#W_host
-def Sfr(z):
-    return (0.0156+0.118*z)/(1+z/3.23)**4.66
-
-def Whost(z,dm_host0):
-    dm_host = dm_host0*np.sqrt(Sfr(z)/Sfr(0))
-    whost1 = dm_host/(1+z)*N(z)
-    return whost1/nbar
+## init setting for halo model
+hcos1 = hm.HaloModel(zs,kk,ms=ms)
+hcos1.add_hod("g",ngal=ngal+zs*0.,corr="max")
+hcos1.add_battaglia_profile("electron",family="AGN",xmax=20,nxs=5000)
 
 
-# Power spectrum, delta_b = 1 (large scale)
-def Cligm_core(ell, gamma, figm):
-    zz = np.linspace(1e-4,z0,100)
-    kl = (ell+0.5)/cosmo.comovingDistance(z_min=0.0,z_max=zz)
-    fine = 1.-gamma*np.log(1.+zz)
-    cligm1 = Wigm(zz,figm)**2*cosmo.Hz(zz)/cosmo.comovingDistance(z_min=0.0,z_max=zz)**2*cosmo.matterPowerSpectrum(kl,zz) * fine**2
-    cligm2 = np.trapz(cligm1,zz)*c_speed/1000
-    return cligm2
+## power spectrum
+def Clgg():
+    pgg_1h = hcos1.get_power_1halo(name="g")[index,:][0,:]
+    pgg_2h = hcos1.get_power_2halo(name="g")[index,:][0,:]
+    pgg = pgg_1h + pgg_2h
 
-def Cligm(gamma,figm):
-    return np.array([Cligm_core(el, gamma,figm) for el in ell_values])
+    clgg = pgg/chig**2/dchig
 
-def Clhost_core(ell, gamma, dm_host0):
-    zz = np.linspace(1e-4,z0,100)
-    kl = (ell+0.5)/cosmo.comovingDistance(z_min=0.0,z_max=zz)
-    fine = 1.-gamma*np.log(1.+zz)
-    clhost1 = Whost(zz, dm_host0)**2*cosmo.Hz(zz)/cosmo.comovingDistance(z_min=0.0,z_max=zz)**2*bias_FRB*cosmo.matterPowerSpectrum(kl,zz) * fine**2
-    clhost2 = np.trapz(clhost1,zz)/c_speed*1000
-    return clhost2
+    return clgg
 
-def Clhost(gamma, dm_host0):
-    return np.array([Clhost_core(el, gamma, dm_host0) for el in ell_values])
+def Clge(alpha):
+    pge_1h = hcos1.get_power_1halo(name="g", name2="electron")[index,:][0,:]
+    pge_2h = hcos1.get_power_2halo(name="g", name2="electron")[index,:][0,:]
+    pge = pge_1h + pge_2h
 
-def Clih_core(ell, gamma, figm, dm_host0):
-    zz = np.linspace(1e-4,z0,100)
-    kl = (ell+0.5)/cosmo.comovingDistance(z_min=0.0,z_max=zz)
-    fine = 1.-gamma*np.log(1.+zz)
-    clih1 = 2*Whost(zz, dm_host0)*Wigm(zz,figm)*cosmo.Hz(zz)/cosmo.comovingDistance(z_min=0.0,z_max=zz)**2*bias_FRB*cosmo.matterPowerSpectrum(kl,zz) * fine**2
-    clih2 = np.trapz(clih1,zz)
-    return clih2   
+    cldg = ne0*(1+zg)/chig**2*pge * (1+alpha)
 
-def Clih(gamma,figm, dm_host0):
-    return np.array([Clih_core(el, gamma,figm, dm_host0) for el in ell_values])
+    return cldg
 
-def Cl(gamma,figm, dm_host0):
-    #print('Cl...')
-    return Cligm(gamma, figm)+Clhost(gamma, dm_host0)+Clih(gamma, figm, dm_host0)
+def Cldd_int(ell):
+    """
+    caculate integral part of Cldd, get Cldd in (pc/cm^3)^2 after multiply ne0(m^-3)
+    ell is a given value
+    """
 
-# Noise
-def Nl(cldm,nfrb):
-    nhost = 4.*np.pi*fsky*(sigma_dm)**2/nfrb
-    return 1. / np.sqrt((2.*ell_values+1.)*fsky) * (cldm+nhost)
+    z_int = np.linspace(0.,zfrb,20)  # len = 20
+    comoving_d = cosmo.comovingDistance(z_min=0.,z_max=z_int[1:])/h   #len = 19
+    kl = np.flip(ell/comoving_d)    #len = 19
+    dzint = np.diff(z_int)[5]
+    
+    hcos = hm.HaloModel(z_int,kl,ms=ms)
+    hcos.add_battaglia_profile("electron",family="AGN",xmax=20,nxs=5000)
+    pee_full = hcos.get_power("electron","electron",verbose=False )[1:,:]    #shape:(20,19) changes to (19,19)
+    pee_diag = np.diagonal(pee_full)
+    pee = pee_diag.reshape(-1, 1)
+    
+    z_chi_h = (1+z_int[1:])**2/comoving_d**2*c/cosmo.Hz(z_int[1:])
+    zchih = z_chi_h#[np.newaxis, :]
+    
+    result = 0
+    for i in range(len(z_int)-1):
+        result = result+zchih[i]*pee[i]*dzint
 
-
-########################## likelihood
-
-print('Cl...')
-cl_data = Cl(0., 0.75, 100)
-noise = Nl(cl_data, 1e+7)
-
-def log_likelihood(gamma, figm, dm_host0):
-        chi1 = cl_data - Cl(gamma, figm, dm_host0)
-        chi2 = noise
-        chi = np.sum(chi1**2 / chi2**2)
-        return -0.5 * chi
+    return result*ne0**2
 
 
+## noise
+def Nldd(sigmad,fsky,N):
+    """
+    caculate DM noise power spectrum, sigmad can be 100, 300, 1000 pc/cm^3
+    nf2d is the number density (per steradian) of FRBs
+    return Nl in (pc/cm^3)^2
+    """
+    omega = 4*np.pi*fsky
+    nf2d = N/omega
+    return sigmad**2/nf2d
+
+def Nlgg(ngal,fsky,V):
+    omega1 = 4*np.pi*fsky
+    ng2d = ngal*V/omega1
+    return 1/ng2d
+
+def Nldg2(clgg, nlgg, cldd, nldd):
+    return (clgg+nlgg)*(cldd+nldd)
+
+
+
+## caculation of noise
+print("cldd...")
+#cldd = np.array([Cldd_int(l) for l in ell_values])
+#np.savetxt('/home/wangsy2/fs_const/galaxy/cldd_575.txt', cldd, fmt='%.10e',comments='')
+cldd = np.loadtxt('/home/wangsy2/fs_const/galaxy/cldd_515.txt', delimiter=' ', dtype='str').astype(float)
+
+clgg = Clgg()
+nl_gg = Nlgg(ngal,fsky=fsky,V=V)
+nl_dd = Nldd(sigmad=sigmaD,N=Nfrb,fsky=fsky)
+nl_dg2 = Nldg2(clgg,nl_gg,cldd,nl_dd)
+np.savetxt('/home/wangsy2/fs_const/galaxy/nl_dg2_515_n7.txt', nl_dg2, fmt='%.10e',comments='')
+#nl_dg2 = np.loadtxt('/home/wangsy2/fs_const/galaxy/nl_dg2.txt', delimiter=' ', dtype='str').astype(float)
+
+
+
+## caculation of Cldg_fid
+
+cldg_fid = Clge(0.)
+
+
+## likelihood
+
+def log_likelihood(alpha):
+
+    chi1 = cldg_fid - Clge(alpha)
+    chi2 = nl_dg2
+    chi = np.sum(chi1**2 / chi2)
+    return -0.5 * chi
+
+print("mcmc...")
 info = {"likelihood": {"loglike": log_likelihood}, \
-        "params": {"gamma": {"prior": {"min": -0.1, "max": 0.1},'ref': 0.,"latex": r'\gamma',"proposal": 0.0002}, \
-                   "figm": {"prior": {"min": 0., "max": 1.0},'ref': 0.75,"latex": r'f_{igm}',"proposal":0.001}, \
-                   "dm_host0": {"prior": {"dist": "norm", "loc": 100., "scale": 10.},'ref': 100.0,"latex": r'DM_{host,0}',"proposal":0.1}   # chains7_1014 
+        "params": {"alpha": {"prior": {"min": -0.1, "max": 0.1},'ref': 0.,"latex": r'\Delta \alpha / \alpha'}, \
                    }, \
         "sampler": {"mcmc": {"Rminus1_stop": 0.01, "max_tries": 10000},},\
-        "output": "chains7_1014_bigger/frb7"
+        "output": "chains515_n7/frb515"
         }
-# 
+# , "proposal":0.0001                   
 updated_info, sampler = run(info,force=True)
-
-
-# _bigger: gamma prior -- 0.0002 , and it is 0.0001 for normal version
-

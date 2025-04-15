@@ -1,0 +1,14 @@
+likelihood:
+  loglike: true
+params:
+  alpha:
+    prior:
+      min: -0.1
+      max: 0.1
+    ref: 0.0
+    latex: \alpha
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    max_tries: 10000
+output: frb515
